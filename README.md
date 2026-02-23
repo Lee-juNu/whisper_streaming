@@ -1,14 +1,14 @@
 # whisper_streaming
+
 Whisper realtime streaming for long speech-to-text transcription and translation
 
-*Note: In 2025, WhisperStreaming is becaming outdated, replaced by [SimulStreaming](https://github.com/ufal/SimulStreaming). See [comparison](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#comparison-to-simulstreaming).*
+_Note: In 2025, WhisperStreaming is becaming outdated, replaced by [SimulStreaming](https://github.com/ufal/SimulStreaming). See [comparison](https://github.com/ufal/whisper_streaming?tab=readme-ov-file#comparison-to-simulstreaming)._
 
 **Turning Whisper into Real-Time Transcription System**
 
 Demonstration paper, by [Dominik Macháček](https://ufal.mff.cuni.cz/dominik-machacek), [Raj Dabre](https://prajdabre.github.io/), [Ondřej Bojar](https://ufal.mff.cuni.cz/ondrej-bojar), 2023
 
-Abstract:    Whisper is one of the recent state-of-the-art multilingual speech recognition and translation models, however, it is not designed for real-time transcription. In this paper, we build on top of Whisper and create Whisper-Streaming, an implementation of real-time speech transcription and translation of Whisper-like models. Whisper-Streaming uses local agreement policy with self-adaptive latency to enable streaming transcription. We show that Whisper-Streaming achieves high quality and 3.3 seconds latency on unsegmented long-form speech transcription test set, and we demonstrate its robustness and practical usability as a component in live transcription service at a multilingual conference. 
-
+Abstract: Whisper is one of the recent state-of-the-art multilingual speech recognition and translation models, however, it is not designed for real-time transcription. In this paper, we build on top of Whisper and create Whisper-Streaming, an implementation of real-time speech transcription and translation of Whisper-like models. Whisper-Streaming uses local agreement policy with self-adaptive latency to enable streaming transcription. We show that Whisper-Streaming achieves high quality and 3.3 seconds latency on unsegmented long-form speech transcription test set, and we demonstrate its robustness and practical usability as a component in live transcription service at a multilingual conference.
 
 [Paper PDF](https://aclanthology.org/2023.ijcnlp-demo.3.pdf), [Demo video](https://player.vimeo.com/video/840442741)
 
@@ -36,47 +36,47 @@ Please, cite us. [ACL Anthology](https://aclanthology.org/2023.ijcnlp-demo.3/), 
 
 ## Installation
 
-1) ``pip install librosa soundfile`` -- audio processing library
+1. `pip install librosa soundfile` -- audio processing library
 
-2) Whisper backend.
+2. Whisper backend.
 
- Several alternative backends are integrated. The most recommended one is [faster-whisper](https://github.com/guillaumekln/faster-whisper) with GPU support. Follow their instructions for NVIDIA libraries -- we succeeded with CUDNN 8.5.0 and CUDA 11.7. Install with `pip install faster-whisper`.
+Several alternative backends are integrated. The most recommended one is [faster-whisper](https://github.com/guillaumekln/faster-whisper) with GPU support. Follow their instructions for NVIDIA libraries -- we succeeded with CUDNN 8.5.0 and CUDA 11.7. Install with `pip install faster-whisper`.
 
 Alternative, less restrictive, but slower backend is [whisper-timestamped](https://github.com/linto-ai/whisper-timestamped): `pip install git+https://github.com/linto-ai/whisper-timestamped`
 
-Thirdly, it's also possible to run this software from the [OpenAI Whisper API](https://platform.openai.com/docs/api-reference/audio/createTranscription). This solution is fast and requires no GPU, just a small VM will suffice, but you will need to pay OpenAI for api access. Also note that, since each audio fragment is processed multiple times, the [price](https://openai.com/pricing) will be higher than obvious from the pricing page, so keep an eye on costs while using. Setting a higher chunk-size will reduce costs significantly. 
+Thirdly, it's also possible to run this software from the [OpenAI Whisper API](https://platform.openai.com/docs/api-reference/audio/createTranscription). This solution is fast and requires no GPU, just a small VM will suffice, but you will need to pay OpenAI for api access. Also note that, since each audio fragment is processed multiple times, the [price](https://openai.com/pricing) will be higher than obvious from the pricing page, so keep an eye on costs while using. Setting a higher chunk-size will reduce costs significantly.
 Install with: `pip install openai` , [requires Python >=3.8](https://pypi.org/project/openai/).
-For running with the openai-api backend, make sure that your [OpenAI api key](https://platform.openai.com/api-keys) is set in the `OPENAI_API_KEY` environment variable. For example, before running, do: `export OPENAI_API_KEY=sk-xxx` with *sk-xxx* replaced with your api key. 
+For running with the openai-api backend, make sure that your [OpenAI api key](https://platform.openai.com/api-keys) is set in the `OPENAI_API_KEY` environment variable. For example, before running, do: `export OPENAI_API_KEY=sk-xxx` with _sk-xxx_ replaced with your api key.
 
-Fourthly, another efficient backend is the [Whisper MLX](https://github.com/ml-explore/mlx-examples/tree/main/whisper)  library, optimized specifically for Apple Silicon. Whisper MLX leverages the performance capabilities of Apple chips (M1, M2...) to deliver faster transcription without requiring a GPU: `pip install mlx-whisper`. All the main whisper models have been converted to the MLX format, and are listed on [Hugging Face Whisper mlx](https://huggingface.co/collections/mlx-community/whisper-663256f9964fbb1177db93dc).
-
+Fourthly, another efficient backend is the [Whisper MLX](https://github.com/ml-explore/mlx-examples/tree/main/whisper) library, optimized specifically for Apple Silicon. Whisper MLX leverages the performance capabilities of Apple chips (M1, M2...) to deliver faster transcription without requiring a GPU: `pip install mlx-whisper`. All the main whisper models have been converted to the MLX format, and are listed on [Hugging Face Whisper mlx](https://huggingface.co/collections/mlx-community/whisper-663256f9964fbb1177db93dc).
 
 The backend is loaded only when chosen. The unused one does not have to be installed.
 
-3) For voice activity controller: `pip install torch torchaudio`. Optional, but very recommended.
+3. For voice activity controller: `pip install torch torchaudio`. Optional, but very recommended.
 
 <details>
 <summary>4) Optional, not recommended: sentence segmenter (aka sentence tokenizer)</summary>
 
 Two buffer trimming options are integrated and evaluated. They have impact on
 the quality and latency. The default "segment" option performs better according
-to our tests and does not require any sentence segmentation installed. 
+to our tests and does not require any sentence segmentation installed.
 
 The other option, "sentence" -- trimming at the end of confirmed sentences,
-requires sentence segmenter installed.  It splits punctuated text to sentences by full
+requires sentence segmenter installed. It splits punctuated text to sentences by full
 stops, avoiding the dots that are not full stops. The segmenters are language
-specific.  The unused one does not have to be installed. We integrate the
+specific. The unused one does not have to be installed. We integrate the
 following segmenters, but suggestions for better alternatives are welcome.
 
 - `pip install opus-fast-mosestokenizer` for the languages with codes `as bn ca cs de el en es et fi fr ga gu hi hu is it kn lt lv ml mni mr nl or pa pl pt ro ru sk sl sv ta te yue zh`
 
 - `pip install tokenize_uk` for Ukrainian -- `uk`
 
-- for other languages, we integrate a good performing multi-lingual model of `wtpslit`. It requires `pip install torch wtpsplit`, and its neural model `wtp-canine-s-12l-no-adapters`. It is downloaded to the default huggingface cache during the first use. 
+- for other languages, we integrate a good performing multi-lingual model of `wtpslit`. It requires `pip install torch wtpsplit`, and its neural model `wtp-canine-s-12l-no-adapters`. It is downloaded to the default huggingface cache during the first use.
 
 - we did not find a segmenter for languages `as ba bo br bs fo haw hr ht jw lb ln lo mi nn oc sa sd sn so su sw tk tl tt` that are supported by Whisper and not by wtpsplit. The default fallback option for them is wtpsplit with unspecified language. Alternative suggestions welcome.
 
 In case of installation issues of opus-fast-mosestokenizer, especially on Windows and Mac, we recommend using only the "segment" option that does not require it.
+
 </details>
 
 ## Usage
@@ -144,8 +144,6 @@ Simulation modes:
 
 - `--offline` option: It processes the whole audio file at once, in offline mode. We implement it to find out the lowest possible WER on given audio file.
 
-
-
 ### Output format
 
 ```
@@ -165,10 +163,9 @@ Simulation modes:
 
 ### As a module
 
-TL;DR: use OnlineASRProcessor object and its methods insert_audio_chunk and process_iter. 
+TL;DR: use OnlineASRProcessor object and its methods insert_audio_chunk and process_iter.
 
 The code whisper_online.py is nicely commented, read it as the full documentation.
-
 
 This pseudocode describes the interface that we suggest for your implementation. You can implement any features that you need for your application.
 
@@ -200,22 +197,36 @@ online.init()  # refresh if you're going to re-use the object for the next audio
 
 ### Server -- real-time from mic
 
-`whisper_online_server.py` has the same model options as `whisper_online.py`, plus `--host` and `--port` of the TCP connection and the `--warmup-file`. See the help message (`-h` option).
+`whisper_online_server.py`는 `whisper_online.py`와 동일한 모델 옵션을 가지며, TCP 연결을 위한 `--host`, `--port`, 그리고 `--warmup-file` 옵션이 추가됩니다. (`-h` 옵션으로 도움말 확인)
 
-Client example:
+#### 실행 예시
+
+**1. .env 파일을 활용한 실행**
+
+```
+# .env 파일에 환경변수 설정 후 실행
+python whisper_online_server.py
+```
+
+**2. 명령줄 인자로 직접 옵션 지정**
+
+```
+python whisper_online_server.py --host 0.0.0.0 --port 43007 --model small --lan ja --backend faster-whisper --min-chunk-size 0.5 --vad
+```
+
+#### Client example:
 
 ```
 arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
 ```
 
-- arecord sends realtime audio from a sound device (e.g. mic), in raw audio format -- 16000 sampling rate, mono channel, S16\_LE -- signed 16-bit integer low endian. (use the alternative to arecord that works for you)
+- arecord sends realtime audio from a sound device (e.g. mic), in raw audio format -- 16000 sampling rate, mono channel, S16_LE -- signed 16-bit integer low endian. (use the alternative to arecord that works for you)
 
 - nc is netcat with server's host and port
 
 ### With WebSocket, FastAPI and web demo
 
 Follow https://github.com/QuentinFuxa/WhisperLiveKit . Contributed by @QuentinFuxa.
-
 
 ## Background
 
@@ -225,7 +236,7 @@ merged with "init prompt". In low latency simultaneous streaming mode, the
 simple and naive chunking fixed-sized windows does not work well, it can split
 a word in the middle. It is also necessary to know when the transcribt is
 stable, should be confirmed ("commited") and followed up, and when the future
-content makes the transcript clearer. 
+content makes the transcript clearer.
 
 For that, there is LocalAgreement-n policy: if n consecutive updates, each with
 a newly available audio stream chunk, agree on a prefix transcript, it is
@@ -243,7 +254,7 @@ the processing is fast.
 
 In more detail: we use the init prompt, we handle the inaccurate timestamps, we
 re-process confirmed sentence prefixes and skip them, making sure they don't
-overlap, and we limit the processing buffer window. 
+overlap, and we limit the processing buffer window.
 
 ### Performance evaluation
 
@@ -266,9 +277,9 @@ Credits:
 
 ### Comparison to SimulStreaming
 
-WhisperStreaming is becoming outdated in 2025. It is being replaced by a new project named [SimulStreaming](https://github.com/ufal/SimulStreaming), by Dominik Macháček, the author of WhisperStreaming. SimulStreaming is much faster and higher quality than WhisperStreaming. It also adds an LLM translation model to be used in a cascade. 
+WhisperStreaming is becoming outdated in 2025. It is being replaced by a new project named [SimulStreaming](https://github.com/ufal/SimulStreaming), by Dominik Macháček, the author of WhisperStreaming. SimulStreaming is much faster and higher quality than WhisperStreaming. It also adds an LLM translation model to be used in a cascade.
 
-Transition: If your project already uses WhisperStreaming, the transition to SimulStreaming should be easy. The WhisperStreaming interface for long-form audio file simulation, simple demo TCP server, and VACOnlineASRProcessor, are integrated in SimulStreaming. However, they may differ in small details, the back-dependency is not planned to be maintained. 
+Transition: If your project already uses WhisperStreaming, the transition to SimulStreaming should be easy. The WhisperStreaming interface for long-form audio file simulation, simple demo TCP server, and VACOnlineASRProcessor, are integrated in SimulStreaming. However, they may differ in small details, the back-dependency is not planned to be maintained.
 
 Backends: WhisperStreaming still has an advantage of more backend options; faster-whisper, whisper_timestamped, OpenAI API, and mlx-whisper have more or less suitable requirements for many diverse users. SimulStreaming implements only one backend based on torch.
 
@@ -277,4 +288,3 @@ Licence: No difference. SimulStreaming changed the licence and is now under MIT.
 ## Contact
 
 Dominik Macháček, machacek@ufal.mff.cuni.cz
-
