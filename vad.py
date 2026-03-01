@@ -17,7 +17,7 @@ class VACOnlineASRProcessor:
 
     SAMPLING_RATE = 16000
 
-    def __init__(self, online_chunk_size: float, asr, tokenizer=None, buffer_trimming=("segment", 15), logfile=sys.stderr):
+    def __init__(self, online_chunk_size: float, asr, tokenizer=None, buffer_trimming=("segment", 15), logfile=sys.stderr, logger=None):
         self.online_chunk_size = online_chunk_size
         self.online = OnlineASRProcessor(asr, tokenizer, buffer_trimming=buffer_trimming, logfile=logfile)
 
@@ -27,6 +27,7 @@ class VACOnlineASRProcessor:
         self.vac = FixedVADIterator(model)
 
         self.logfile = logfile
+        self.logger = logger
         self.init()
 
     def init(self):
@@ -60,6 +61,8 @@ class VACOnlineASRProcessor:
             elif "end" in res and "start" not in res:
                 self.status = "nonvoice"
                 send_audio = self.audio_buffer[:frame]
+                if self.logger:
+                    self.logger.info("TO LLM: VAD detected end of sentence.")
                 self.online.insert_audio_chunk(send_audio)
                 self.current_online_chunk_buffer_size += len(send_audio)
                 self.is_currently_final = True

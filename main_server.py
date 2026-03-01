@@ -1,31 +1,5 @@
-#!/usr/bin/env python3
-"""
-whisper_server.py
-
-- Replaces `from whisper_online import *` with the split modules:
-  - audio.py
-  - asr_backends.py
-  - online_processor.py
-  - vad.py
-  - manager.py (optional; not required for basic server)
-
-- Keeps your protocol:
-  - Client sends RAW PCM16 mono 16kHz bytes (no WAV header)
-  - Server buffers until >= min_chunk_size seconds
-  - Server returns: "beg_ms end_ms text" per confirmed segment
-  - Avoids sending identical line twice (line_packet)
-
-Notes:
-- FIXED bug: `online.process_iter()` -> `self.online_asr_proc.process_iter()`
-- Requires: line_packet.py and silero_vad_iterator.py in import path if using --vac
-"""
-
-
-import sys, os, io, math, socket, argparse, logging, threading, queue
-import numpy as np, librosa, soundfile
+import sys, os, argparse, logging, socket
 from dotenv import load_dotenv
-from manager import ASRManager
-load_dotenv()
 from audio import load_audio_chunk, SAMPLING_RATE
 from asr_backends import (
     FasterWhisperASR,
@@ -35,13 +9,11 @@ from asr_backends import (
 )
 from online_processor import OnlineASRProcessor
 from vad import VACOnlineASRProcessor
-import line_packet
+from connection import Connection
+from threaded_processor import ThreadedServerProcessor
+
 logger = logging.getLogger(__name__)
-
-
-# -----------------------------
-# Args / Env
-# -----------------------------
+load_dotenv()
 
 def add_shared_args(parser: argparse.ArgumentParser):
     parser.add_argument('--min-chunk-size', type=float, default=1.0,
@@ -77,13 +49,13 @@ def add_shared_args(parser: argparse.ArgumentParser):
                         default='DEBUG',
                         help="Log level.")
 
-
 def override_args_with_env(args):
     env_map = {
         'model': 'WHISPER_MODEL',
         'lan': 'WHISPER_LANG',
         'backend': 'WHISPER_BACKEND',
         'min_chunk_size': 'WHISPER_MIN_CHUNK',
+        'threshold': 'WHISPER_THRESHOLD',
         'vad': 'WHISPER_VAD',
         'host': 'WHISPER_HOST',
         'port': 'WHISPER_PORT',
@@ -95,32 +67,23 @@ def override_args_with_env(args):
         'buffer_trimming': 'WHISPER_TRIM',
         'buffer_trimming_sec': 'WHISPER_TRIM_SEC',
     }
-
     for arg, env in env_map.items():
         val = os.getenv(env)
         if val is None or not hasattr(args, arg):
             continue
-
         if arg in ('vad', 'vac'):
             setattr(args, arg, val.lower() in ('1', 'true', 'yes', 'y', 'on'))
         elif arg in ('port',):
             setattr(args, arg, int(val))
-        elif arg in ('min_chunk_size', 'vac_chunk_size', 'buffer_trimming_sec'):
+        elif arg in ('min_chunk_size', 'vac_chunk_size', 'buffer_trimming_sec', 'threshold'):
             setattr(args, arg, float(val))
         else:
             setattr(args, arg, val)
-
     return args
-
 
 def set_logging(args):
     logging.basicConfig(format='%(levelname)s\t%(message)s')
     logger.setLevel(args.log_level)
-
-
-# -----------------------------
-# ASR Factory (no whisper_online)
-# -----------------------------
 
 def asr_factory(args, logfile=sys.stderr):
     if args.backend == "openai-api":
@@ -133,22 +96,17 @@ def asr_factory(args, logfile=sys.stderr):
             asr_cls = MLXWhisper
         else:
             asr_cls = WhisperTimestampedASR
-
         size = args.model
         logger.info(f"Loading Whisper model={size}, lan={args.lan}, backend={args.backend} ...")
         asr = asr_cls(modelsize=size, lan=args.lan, cache_dir=args.model_cache_dir, model_dir=args.model_dir, logfile=logfile)
         logger.info("Whisper model loaded.")
-
     if args.vad:
         logger.info("Enabling VAD option on backend (if supported).")
         asr.use_vad()
-
     if args.task == "translate":
         asr.set_translate_task()
-
-    tokenizer = None  # keep server minimal; add tokenizer if you need sentence trimming
+    tokenizer = None
     trimming = (args.buffer_trimming, args.buffer_trimming_sec)
-
     if args.vac:
         online = VACOnlineASRProcessor(
             args.min_chunk_size,
@@ -158,8 +116,6 @@ def asr_factory(args, logfile=sys.stderr):
             logfile=logfile,
             logger=logger
         )
-        # server side min_chunk for waiting on audio is still args.min_chunk_size
-        # VAC's internal "process_iter cadence" depends on online_chunk_size (args.min_chunk_size)
     else:
         online = OnlineASRProcessor(
             asr,
@@ -167,8 +123,44 @@ def asr_factory(args, logfile=sys.stderr):
             buffer_trimming=trimming,
             logfile=logfile,
         )
-
     return asr, online
 
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", type=str, default=os.getenv("WHISPER_HOST", "localhost"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("WHISPER_PORT", "43007")))
+    parser.add_argument("--warmup-file", type=str, dest="warmup_file",
+                        help="Path to a speech wav file to warm up. Reads first 1s at 16kHz.")
+    add_shared_args(parser)
+    args = parser.parse_args()
+    args = override_args_with_env(args)
+    set_logging(args)
+    # threshold 값이 없으면 기본값 사용
+    threshold = getattr(args, 'threshold', 0.01)
+    asr, online = asr_factory(args, logfile=sys.stderr)
+    msg = "Whisper is not warmed up. The first chunk processing may take longer."
+    if args.warmup_file:
+        if os.path.isfile(args.warmup_file):
+            a = load_audio_chunk(args.warmup_file, 0, 1)
+            asr.transcribe(a)
+            logger.info("Whisper is warmed up.")
+        else:
+            logger.critical("Warmup file not available. " + msg)
+            sys.exit(1)
+    else:
+        logger.warning(msg)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((args.host, args.port))
+        s.listen(1)
+        logger.info("Listening on %s" % str((args.host, args.port)))
+        while True:
+            conn, addr = s.accept()
+            logger.info("Connected to client on %s" % (addr,))
+            connection = Connection(conn)
+            proc = ThreadedServerProcessor(connection, online, args.min_chunk_size, threshold=threshold)
+            proc.process()
+            conn.close()
+            logger.info("Connection to client closed")
 
-# 이 파일은 기능별로 분리되었습니다. connection.py, threaded_processor.py, main_server.py를 참고하세요.
+if __name__ == "__main__":
+    main()

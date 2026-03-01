@@ -31,11 +31,16 @@ def send_one_line(socket, text, pad_zeros=False):
         socket: a socket object.
         text: string containing a line of text for transmission.
     """
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
+    logging.debug(f"send_one_line called with text: {text}, pad_zeros: {pad_zeros}")
     text.replace('\0', '\n')
     lines = text.splitlines()
     first_line = '' if len(lines) == 0 else lines[0]
+    logging.debug(f"First line to send: {first_line}")
     # TODO Is there a better way of handling bad input than 'replace'?
     data = first_line.encode('utf-8', errors='replace') + b'\n' + (b'\0' if pad_zeros else b'')
+    logging.debug(f"Encoded data: {data}")
     for offset in range(0, len(data), PACKET_SIZE):
         bytes_remaining = len(data) - offset
         if bytes_remaining < PACKET_SIZE:
@@ -43,6 +48,7 @@ def send_one_line(socket, text, pad_zeros=False):
             packet = data[offset:] + (b'\0' * padding_length if pad_zeros else b'')
         else:
             packet = data[offset:offset+PACKET_SIZE]
+        logging.debug(f"Sending packet: {packet}")
         socket.sendall(packet)
 
 
@@ -64,30 +70,43 @@ def receive_one_line(socket):
         A string representing a single line with a terminating newline or
         None if the connection has been closed.
     """
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
     data = b''
     while True:
         packet = socket.recv(PACKET_SIZE)
+        logging.debug(f"Received packet: {packet}")
         if not packet:  # Connection has been closed.
+            logging.debug("Connection closed while receiving one line.")
             return None
         data += packet
         if b'\0' in packet:
             break
     # TODO Is there a better way of handling bad input than 'replace'?
     text = data.decode('utf-8', errors='replace').strip('\0')
+    logging.debug(f"Decoded text: {text}")
     lines = text.split('\n')
+    logging.debug(f"Lines received: {lines}")
     return lines[0] + '\n'
 
 
 def receive_lines(socket):
+    import logging
+    logging.basicConfig(level=logging.DEBUG)
     try:
         data = socket.recv(PACKET_SIZE)
+        logging.debug(f"Received packet: {data}")
     except BlockingIOError:
+        logging.debug("BlockingIOError encountered in receive_lines.")
         return []
     if data is None:  # Connection has been closed.
+        logging.debug("Connection closed in receive_lines.")
         return None
     # TODO Is there a better way of handling bad input than 'replace'?
     text = data.decode('utf-8', errors='replace').strip('\0')
+    logging.debug(f"Decoded text: {text}")
     lines = text.split('\n')
+    logging.debug(f"Lines received: {lines}")
     if len(lines)==1 and not lines[0]:
         return None
     return lines
