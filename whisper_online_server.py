@@ -263,26 +263,15 @@ class ServerProcessor:
         return conc
 
     def format_output_transcript(self, o):
-        """
-        o: (beg_sec|None, end_sec|None, text)
-        Returns protocol line: "beg_ms end_ms text" or None.
-        Ensures non-overlapping [beg,end] by max(beg, last_end).
-        """
         if o[0] is None:
-            logger.debug("No text in this segment")
             return None
 
-        beg_ms = o[0] * 1000.0
-        end_ms = o[1] * 1000.0
+        text = o[2].strip()
 
-        if self.last_end_ms is not None:
-            beg_ms = max(beg_ms, self.last_end_ms)
+        if not text:
+            return None
 
-        self.last_end_ms = end_ms
-
-        line = "%1.0f %1.0f %s" % (beg_ms, end_ms, o[2])
-        print(line, flush=True, file=sys.stderr)
-        return line
+        return text
 
     def send_result(self, o):
         msg = self.format_output_transcript(o)
@@ -293,6 +282,7 @@ class ServerProcessor:
         # Handle one client connection
         self.online_asr_proc.init()
 
+
         while True:
             a = self.receive_audio_chunk()
             if a is None:
@@ -302,9 +292,6 @@ class ServerProcessor:
 
             # FIX: use self.online_asr_proc, not global
             o = self.online_asr_proc.process_iter()
-            llm_text = self.manager.handle(o, is_final=False)
-            if llm_text:
-                self.connection.send(f"LLM {llm_text}")
             try:
                 self.send_result(o)
             except BrokenPipeError:

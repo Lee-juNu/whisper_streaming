@@ -95,11 +95,13 @@ class FasterWhisperASR(ASRBase):
         else:
             raise ValueError("modelsize or model_dir must be set")
 
-        # CUDA FP16 default
+        import os
+        device = os.getenv("WHISPER_DEVICE", "cpu")
+        compute_type = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
         return WhisperModel(
             model_size_or_path,
-            device="cuda",
-            compute_type="float16",
+            device=device,
+            compute_type=compute_type,
             download_root=cache_dir,
         )
 
