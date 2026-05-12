@@ -110,7 +110,7 @@ class FasterWhisperASR(ASRBase):
             audio,
             language=self.original_language,
             initial_prompt=init_prompt,
-            beam_size=5,
+            beam_size=1,
             word_timestamps=True,
             condition_on_previous_text=True,
             **self.transcribe_kargs,
