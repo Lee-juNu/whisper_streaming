@@ -171,4 +171,177 @@ def asr_factory(args, logfile=sys.stderr):
     return asr, online
 
 
-# 이 파일은 기능별로 분리되었습니다. connection.py, threaded_processor.py, main_server.py를 참고하세요.
+# -----------------------------
+# Socket helpers
+# -----------------------------
+
+class Connection:
+    """Wraps socket conn; provides line-based send/recv and raw-audio recv."""
+    PACKET_SIZE = 32000 * 5 * 60  # bytes, ~5min @ 16kHz PCM16 mono (~32KB/s)
+
+    def __init__(self, conn: socket.socket):
+        self.conn = conn
+        self.last_line = ""
+        self.conn.setblocking(True)
+
+    def send(self, line: str):
+        # prevent sending identical line twice
+        if line == self.last_line:
+            return
+        line_packet.send_one_line(self.conn, line)
+        self.last_line = line
+
+    def receive_lines(self):
+        return line_packet.receive_lines(self.conn)
+
+    def non_blocking_receive_audio(self):
+        try:
+            return self.conn.recv(self.PACKET_SIZE)
+        except ConnectionResetError:
+            return None
+
+
+# -----------------------------
+# Server processor
+# -----------------------------
+
+class ServerProcessor:
+    def __init__(self, connection: Connection, online_asr_proc, min_chunk: float):
+        self.connection = connection
+        self.online_asr_proc = online_asr_proc
+        self.min_chunk = float(min_chunk)
+        self.manager = ASRManager()
+        self.last_end_ms = None
+        self.is_first = True
+
+    def receive_audio_chunk(self):
+        """
+        Receive RAW PCM16LE mono 16kHz bytes until >= min_chunk seconds accumulated.
+        Returns float32 numpy array @ 16kHz, or None if connection closed / insufficient first chunk.
+        """
+        out = []
+        minlimit = int(self.min_chunk * SAMPLING_RATE)
+
+        while sum(len(x) for x in out) < minlimit:
+            raw_bytes = self.connection.non_blocking_receive_audio()
+            if not raw_bytes:
+                break
+
+            # Read raw PCM16LE stream as SoundFile, then load via librosa to float32 @ 16kHz
+            raw_f = soundfile.SoundFile(
+                io.BytesIO(raw_bytes),
+                channels=1,
+                endian="LITTLE",
+                samplerate=SAMPLING_RATE,
+                subtype="PCM_16",
+                format="RAW",
+            )
+            audio, _ = librosa.load(raw_f, sr=SAMPLING_RATE, dtype=np.float32)
+            out.append(audio)
+
+        if not out:
+            return None
+
+        conc = np.concatenate(out)
+        if self.is_first and len(conc) < minlimit:
+            # first chunk must reach minlimit, otherwise wait more
+            return None
+
+        self.is_first = False
+        return conc
+
+    def format_output_transcript(self, o):
+        if o[0] is None:
+            return None
+
+        text = o[2].strip()
+
+        if not text:
+            return None
+
+        return text
+
+    def send_result(self, o):
+        msg = self.format_output_transcript(o)
+        if msg is not None:
+            self.connection.send(msg)
+
+    def process(self):
+        # Handle one client connection
+        self.online_asr_proc.init()
+
+
+        while True:
+            a = self.receive_audio_chunk()
+            if a is None:
+                break
+
+            self.online_asr_proc.insert_audio_chunk(a)
+
+            # FIX: use self.online_asr_proc, not global
+            o = self.online_asr_proc.process_iter()
+            try:
+                self.send_result(o)
+            except BrokenPipeError:
+                logger.info("broken pipe -- connection closed?")
+                break
+
+        # Optional: flush remaining
+        # o = self.online_asr_proc.finish()
+        # self.send_result(o)
+
+
+# -----------------------------
+# Main
+# -----------------------------
+
+def main():
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("--host", type=str, default=os.getenv("WHISPER_HOST", "localhost"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("WHISPER_PORT", "43007")))
+    parser.add_argument("--warmup-file", type=str, dest="warmup_file",
+                        help="Path to a speech wav file to warm up. Reads first 1s at 16kHz.")
+
+    add_shared_args(parser)
+
+    args = parser.parse_args()
+    args = override_args_with_env(args)
+    set_logging(args)
+
+    # Create ASR & Online processor
+    asr, online = asr_factory(args, logfile=sys.stderr)
+
+    # Warmup
+    msg = "Whisper is not warmed up. The first chunk processing may take longer."
+    if args.warmup_file:
+        if os.path.isfile(args.warmup_file):
+            a = load_audio_chunk(args.warmup_file, 0, 1)
+            asr.transcribe(a)
+            logger.info("Whisper is warmed up.")
+        else:
+            logger.critical("Warmup file not available. " + msg)
+            sys.exit(1)
+    else:
+        logger.warning(msg)
+
+    # Server loop
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind((args.host, args.port))
+        s.listen(1)
+        logger.info("Listening on %s" % str((args.host, args.port)))
+
+        while True:
+            conn, addr = s.accept()
+            logger.info("Connected to client on %s" % (addr,))
+            connection = Connection(conn)
+
+            proc = ServerProcessor(connection, online, args.min_chunk_size)
+            proc.process()
+
+            conn.close()
+            logger.info("Connection to client closed")
+
+
+if __name__ == "__main__":
+    main()
