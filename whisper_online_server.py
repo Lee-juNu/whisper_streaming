@@ -20,23 +20,12 @@ Notes:
 - Requires: line_packet.py and silero_vad_iterator.py in import path if using --vac
 """
 
-import sys
-import os
-import io
-import math
-import socket
-import argparse
-import logging
 
-import numpy as np
-import librosa
-import soundfile
-
+import sys, os, io, math, socket, argparse, logging, threading, queue
+import numpy as np, librosa, soundfile
 from dotenv import load_dotenv
-
 from manager import ASRManager
 load_dotenv()
-
 from audio import load_audio_chunk, SAMPLING_RATE
 from asr_backends import (
     FasterWhisperASR,
@@ -46,9 +35,7 @@ from asr_backends import (
 )
 from online_processor import OnlineASRProcessor
 from vad import VACOnlineASRProcessor
-
 import line_packet
-
 logger = logging.getLogger(__name__)
 
 
@@ -169,6 +156,7 @@ def asr_factory(args, logfile=sys.stderr):
             tokenizer,
             buffer_trimming=trimming,
             logfile=logfile,
+            logger=logger
         )
         # server side min_chunk for waiting on audio is still args.min_chunk_size
         # VAC's internal "process_iter cadence" depends on online_chunk_size (args.min_chunk_size)
