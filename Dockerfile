@@ -1,33 +1,53 @@
-# Whisper Streaming Dockerfile
-# Python base image
-FROM python:3.11-slim
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 \
+        python3.11-dev \
+        python3.11-distutils \
+        curl \
+        ca-certificates \
         build-essential \
         ffmpeg \
         libsndfile1 \
-        git \
-        && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# Set workdir
+RUN ln -sf /usr/bin/python3.11 /usr/bin/python
+
+# get-pip.py 로 python3.11 전용 pip 설치 (ensurepip 가 없으므로)
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py -o /tmp/get-pip.py \
+    && python3.11 /tmp/get-pip.py \
+    && rm /tmp/get-pip.py
+
 WORKDIR /app
 
-# Copy requirements (if exists) or install inline
-COPY .env ./
-COPY whisper_online_server.py ./
-COPY whisper_online.py ./
-COPY line_packet.py ./
-COPY silero_vad_iterator.py ./
-COPY mic_to_tcp.py ./
-COPY README.md ./
+RUN python3.11 -m pip install --no-cache-dir \
+    python-dotenv \
+    numpy \
+    librosa \
+    soundfile \
+    websockets \
+    faster-whisper
 
-# Install python packages
-RUN pip install --no-cache-dir python-dotenv librosa soundfile faster-whisper torch torchaudio
+RUN python3.11 -m pip install --no-cache-dir \
+    torch \
+    torchaudio \
+    --index-url https://download.pytorch.org/whl/cu121
 
-# Expose port (default from .env)
-EXPOSE 43007
+COPY manager.py \
+     audio.py \
+     online_processor.py \
+     vad.py \
+     whisper_online.py \
+     whisper_online_server.py \
+     asr_backends.py \
+     line_packet.py \
+     silero_vad_iterator.py \
+     threaded_processor.py \
+     ws_server.py \
+     ./
 
-# Entrypoint: .env 적용하여 서버 실행
-CMD ["python", "whisper_online_server.py"]
+EXPOSE 8100
+
+CMD ["python", "ws_server.py"]

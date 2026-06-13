@@ -1,0 +1,31 @@
+services:
+  whisper:
+    build: .
+    container_name: npc_whisper
+    restart: unless-stopped
+    ports:
+      - "${WHISPER_PORT:-8100}:8100"
+    environment:
+      WHISPER_HOST: 0.0.0.0
+      WHISPER_PORT: 8100
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v2}
+      WHISPER_BACKEND: ${WHISPER_BACKEND:-faster-whisper}
+      WHISPER_LANG: ${WHISPER_LANG:-ko}
+      WHISPER_LOG_LEVEL: ${WHISPER_LOG_LEVEL:-INFO}
+      WHISPER_SILENCE_FLUSH_SEC: ${WHISPER_SILENCE_FLUSH_SEC:-1.5}
+      WHISPER_MAX_BUFFER_SEC: ${WHISPER_MAX_BUFFER_SEC:-10.0}
+      WHISPER_MIN_CHARS: ${WHISPER_MIN_CHARS:-1}
+    volumes:
+      - whisper_model_cache:/root/.cache/huggingface
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  whisper_model_cache:
