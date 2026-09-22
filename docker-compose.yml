@@ -17,6 +17,11 @@ services:
       WHISPER_SILENCE_FLUSH_SEC: ${WHISPER_SILENCE_FLUSH_SEC:-1.5}
       WHISPER_MAX_BUFFER_SEC: ${WHISPER_MAX_BUFFER_SEC:-10.0}
       WHISPER_MIN_CHARS: ${WHISPER_MIN_CHARS:-1}
+      # segment = 발화 단위로 한 번에 전사(기본). stream = 기존 LocalAgreement 스트리밍(롤백용)
+      WHISPER_MODE: ${WHISPER_MODE:-segment}
+      WHISPER_MAX_UTTERANCE_SEC: ${WHISPER_MAX_UTTERANCE_SEC:-20.0}
+      WHISPER_MIN_UTTERANCE_SEC: ${WHISPER_MIN_UTTERANCE_SEC:-0.4}
+      WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE:-5}
     volumes:
       - whisper_model_cache:/root/.cache/huggingface
     extra_hosts:
