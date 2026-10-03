@@ -34,6 +34,9 @@ ws_server.py — 마이크 PCM 을 받아 텍스트로 돌려주는 WebSocket AS
                             보낸다(asr_backends.NemotronASR, NEMO_URL / NEMO_LANGUAGE)
   WHISPER_MODE              segment | stream   (기본: segment)
   WHISPER_SILENCE_FLUSH_SEC 무음 타임아웃(초)   (기본: 1.5) — 두 모드 공용
+  WHISPER_EARLY_FLUSH_SEC   [segment] 꼬리 무음이 이 값에 닿으면 확정(기본: 비움 = 위 값 그대로).
+                            판옵티콘이 「이어 말함」을 되돌려 합칠 수 있을 때만 켠다(early_endpoint_plan.md P3)
+  WHISPER_SPEECH_SIGNALS    [segment] 1 이면 {"type":"speech_start"} / {"type":"speech_end"} 를 보낸다(기본: 0)
   WHISPER_SILENCE_PEAK      무음 판단 피크      (기본: 0.02)
   WHISPER_MIN_SPEECH_PEAK   Whisper 최소 피크   (기본: 0.001)
 
@@ -85,6 +88,18 @@ HOST                = os.getenv("WHISPER_HOST", "0.0.0.0")
 PORT                = int(os.getenv("WHISPER_PORT", "8100"))
 LOG_LEVEL           = os.getenv("WHISPER_LOG_LEVEL", "INFO")
 SILENCE_FLUSH_SEC   = float(os.getenv("WHISPER_SILENCE_FLUSH_SEC", "1.5"))
+# 발화 **안의** 쉼을 기록하는 최소 길이(초). 동작은 바꾸지 않고 로그(PAUSE 줄)만 남긴다 —
+# 「무음 몇 초에서 닫으면 몇 번 갈렸을까」를 실사용으로 재기 위한 것(npc_panopticon/docs/early_endpoint_plan.md P0).
+PAUSE_LOG_MIN_SEC   = float(os.getenv("WHISPER_PAUSE_LOG_MIN_SEC", "0.2"))
+# 일찍 닫기(P3). 비우거나 SILENCE_FLUSH_SEC 이상이면 꺼진 것 — 예전과 같은 1.5초.
+# 켜면 확정이 빨라지는 대신 쉬었다 이어 말한 발화가 갈린다. 그 뒷말을 판옵티콘이 되돌려
+# 합치므로(turn_queue 의 restart) **판옵티콘 P2 가 배포된 뒤에만** 켤 것.
+_early = float(os.getenv("WHISPER_EARLY_FLUSH_SEC") or 0)
+SEGMENT_FLUSH_SEC   = _early if 0 < _early < SILENCE_FLUSH_SEC else SILENCE_FLUSH_SEC
+SEGMENT_FLUSH_REASON = "early" if SEGMENT_FLUSH_SEC < SILENCE_FLUSH_SEC else "silence"
+# 발화 시작·끝 신호. 판옵티콘 턴 큐가 「아직 말하는 중」과 「이어 말함」을 안다.
+# P2 이전 판옵티콘에 보내면 말 끝 뒤 대기(1.5초)가 오히려 붙으므로 P2 배포 뒤에 켠다.
+SPEECH_SIGNALS      = os.getenv("WHISPER_SPEECH_SIGNALS", "0") in ("1", "true", "True")
 MAX_BUFFER_SEC      = float(os.getenv("WHISPER_MAX_BUFFER_SEC", "10.0"))
 SILENCE_PEAK_THRESH = float(os.getenv("WHISPER_SILENCE_PEAK", "0.02"))
 MIN_SPEECH_PEAK     = float(os.getenv("WHISPER_MIN_SPEECH_PEAK", "0.001"))
@@ -194,6 +209,40 @@ def _is_looping(text: str) -> bool:
     return False
 
 
+# 꼬리 반복을 접는 기준 — 조각 길이별 최소 반복 횟수. 「はいはいはいはい」(2글자×4)는
+# 사람이 실제로 하는 말이라 남기고, 그보다 많이 되풀이한 것만 접는다.
+_TAIL_MIN_REPEAT = {1: 6, 2: 5}
+_TAIL_MIN_REPEAT_LONG = 4   # 3글자 이상
+_TAIL_MAX_UNIT = 6
+
+
+def _collapse_tail_repeat(text: str) -> str:
+    """실제 말 **뒤에** 붙은 반복 루프를 한 번으로 접는다.
+
+    Nemotron 은 whisper 처럼 무음에 문장을 지어내기보다, 말 끝에서 마지막 조각을
+    되풀이하는 쪽으로 틀린다(2026-10-02 실사용 186건 중 2건):
+    「約束を守って帰ってきてきてきてきてきて」「ご主人さんさんさんさんさん」.
+    `_is_looping` 은 발화 **전체가** 처음부터 반복일 때만 버리는 가드라 이 형태를 못 잡는다.
+    버리면 앞의 진짜 말까지 잃으므로 꼬리만 한 번으로 줄인다.
+    """
+    t = text.rstrip()
+    end = t.rstrip("。、．，,.!?！？…")
+    tail_punct = t[len(end):]
+    for unit in range(1, _TAIL_MAX_UNIT + 1):
+        need = _TAIL_MIN_REPEAT.get(unit, _TAIL_MIN_REPEAT_LONG)
+        if len(end) < unit * need:
+            continue
+        piece = end[-unit:]
+        if not piece.strip():
+            continue
+        count = 1
+        while end[: len(end) - unit * count].endswith(piece):
+            count += 1
+        if count >= need:
+            return end[: len(end) - unit * (count - 1)] + tail_punct
+    return text
+
+
 def _transcribe_utterance(audio: np.ndarray, init_prompt: str) -> str:
     """발화 한 덩어리를 전사하고 환각을 걸러 텍스트 하나로 돌려준다.
 
@@ -231,7 +280,10 @@ def _transcribe_utterance(audio: np.ndarray, init_prompt: str) -> str:
         logger.debug(f"발화 버림 (루프): {full!r}")
         return ""
 
-    return full
+    collapsed = _collapse_tail_repeat(full)
+    if collapsed != full:
+        logger.info(f"꼬리 반복 접음: {full!r} → {collapsed!r}")
+    return collapsed
 
 
 def _make_online_processor():
@@ -404,22 +456,45 @@ async def _run_segment_mode(websocket, session_id: str):
     utterance: list[np.ndarray] = []
     utt_sec         = 0.0
     trailing_sil    = 0.0          # 버퍼 꼬리에 붙어 있는 무음 길이(초)
+    # ── 쉼 측정(P0, 로그 전용) ── 오디오 시간 기준. 클라이언트가 무음까지 흘려보내므로
+    # 확정 뒤 버퍼에는 앞쪽 무음이 먼저 쌓인다 — 첫 유성 청크 전의 무음은 발화 안의 쉼이 아니다.
+    pauses: list[float] = []       # 이번 발화 안에서 소리가 끊겼다 다시 난 쉼들
+    voiced_seen     = False        # 이번 발화에 유성 청크가 있었나
+    since_voice: float | None = None  # 마지막 유성 청크 뒤로 흐른 무음(확정을 넘어 이어진다). 아직 소리가 없었으면 None
+    resumed_after: float | None = None  # 이번 발화가 시작되기 전의 쉼(= 앞 발화와의 간격)
     last_recv_at    = time.monotonic()
     prev_text       = ""           # 다음 발화의 init_prompt (고유명사 유지용)
     lock            = asyncio.Lock()
 
+    async def signal(kind: str):
+        """발화 신호 한 줄. 실패해도 전사는 계속한다 — 신호는 힌트다."""
+        try:
+            await websocket.send(json.dumps({"type": kind}))
+        except Exception:
+            pass
+
     async def finalize(reason: str):
         """버퍼를 비우고 전사해 확정 텍스트를 보낸다. 계기와 무관하게 이 한 곳만 쓴다."""
-        nonlocal utterance, utt_sec, trailing_sil, prev_text
+        nonlocal utterance, utt_sec, trailing_sil, prev_text, pauses, voiced_seen, resumed_after
 
         async with lock:
             # 여기에는 await 가 없다 — 수신 루프가 끼어들어 옛 리스트에 덧붙일 틈이 없다.
             if not utterance:
                 return
             audio        = np.concatenate(utterance)
+            tail_sil     = trailing_sil
+            utt_pauses, utt_resumed = pauses, resumed_after
+            was_voiced   = voiced_seen
             utterance    = []
             utt_sec      = 0.0
             trailing_sil = 0.0
+            pauses, voiced_seen, resumed_after = [], False, None
+
+            # speech_start 를 보낸 발화는 **반드시** 끝을 알린다 — 아래에서 짧다·무음·환각으로
+            # 버려져 final 이 안 나가도 판옵티콘의 「말하는 중」이 풀려야 한다.
+            # 전사 전에 보내는 이유: 끝은 이미 확정됐고, 전사(0.05~0.4초)를 기다릴 이유가 없다.
+            if SPEECH_SIGNALS and was_voiced:
+                await signal("speech_end")
 
             dur  = len(audio) / SAMPLING_RATE
             peak = float(np.max(np.abs(audio))) if audio.size else 0.0
@@ -454,6 +529,13 @@ async def _run_segment_mode(websocket, session_id: str):
                 f"[{session_id}] STT({reason}): {text!r} "
                 f"[발화 {dur:.1f}s / 추론 {infer:.2f}s]"
             )
+            # P0 측정 줄. JSON 이라 grep 한 줄로 모아 분석한다(early_endpoint_plan.md).
+            logger.info(f"[{session_id}] PAUSE " + json.dumps({
+                "reason": reason, "dur": round(dur, 2), "tail": round(tail_sil, 2),
+                "pauses": utt_pauses,
+                "resumed_after": None if utt_resumed is None else round(utt_resumed, 2),
+                "chars": len(text),
+            }))
             try:
                 await websocket.send(json.dumps(
                     {"type": "final", "text": text, "duration": round(dur, 2), "reason": reason},
@@ -485,7 +567,7 @@ async def _run_segment_mode(websocket, session_id: str):
         """클라이언트가 EOU 를 안 보낼 때의 폴백. 수신이 끊기면 발화 끝으로 본다."""
         while True:
             await asyncio.sleep(0.2)
-            if utterance and (time.monotonic() - last_recv_at) > SILENCE_FLUSH_SEC:
+            if utterance and (time.monotonic() - last_recv_at) > SEGMENT_FLUSH_SEC:
                 await finalize("timeout")
 
     watchdog = asyncio.create_task(silence_watchdog())
@@ -516,11 +598,22 @@ async def _run_segment_mode(websocket, session_id: str):
             # 무음을 계속 흘려보내는 클라이언트(VAD 가 없는 쪽)도 같은 판정을 받게 한다.
             if chunk_is_silence(audio):
                 trailing_sil += chunk_sec
+                if since_voice is not None:
+                    since_voice += chunk_sec
             else:
+                if voiced_seen:
+                    if trailing_sil >= PAUSE_LOG_MIN_SEC:
+                        pauses.append(round(trailing_sil, 2))
+                else:
+                    voiced_seen   = True
+                    resumed_after = since_voice  # 연결 뒤 첫 발화는 앞 발화가 없다 → None
+                    if SPEECH_SIGNALS:
+                        await signal("speech_start")
                 trailing_sil = 0.0
+                since_voice  = 0.0
 
-            if trailing_sil >= SILENCE_FLUSH_SEC:
-                await finalize("silence")
+            if trailing_sil >= SEGMENT_FLUSH_SEC:
+                await finalize(SEGMENT_FLUSH_REASON)
             elif utt_sec >= MAX_UTTERANCE_SEC:
                 # 무음 없이 계속 말하는 중. 여기서 끊지 않으면 아무것도 안 나온다.
                 await finalize("max")
