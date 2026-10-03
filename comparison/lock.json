@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "python_packages": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.0",
+    "numpy": "2.4.6",
+    "onnxruntime": "1.26.0"
+  },
+  "models": {
+    "whisper-small": {
+      "repo": "Systran/faster-whisper-small",
+      "revision": "536b0662742c02347bc0e980a01041f333bce120",
+      "model_card": "https://huggingface.co/Systran/faster-whisper-small",
+      "note": "current production cache matches this revision"
+    },
+    "kotoba-whisper-v2": {
+      "repo": "kotoba-tech/kotoba-whisper-v2.0-faster",
+      "revision": "f44edd35eaeb2274e85ac7b31fb2c6f59ff1c4bc",
+      "model_card": "https://huggingface.co/kotoba-tech/kotoba-whisper-v2.0-faster",
+      "approx_download": "1.51GB"
+    },
+    "nemotron": {
+      "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+      "revision": "ea30d66debe3740a08b573244286791d423d6b3e",
+      "gguf_filename": "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+      "quantization": "Q8_0",
+      "model_card": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
+      "approx_download": "742MB"
+    }
+  },
+  "sources": {
+    "nemo_speech_cpp": {
+      "repo": "https://github.com/NVIDIA/NeMo-Speech.cpp",
+      "commit": "4f9676226f667d14608487df744f375db87127f8",
+      "version": "0.1.0",
+      "docs": [
+        "https://github.com/NVIDIA/NeMo-Speech.cpp/blob/4f9676226f667d14608487df744f375db87127f8/docs/api.md",
+        "https://github.com/NVIDIA/NeMo-Speech.cpp/blob/4f9676226f667d14608487df744f375db87127f8/docs/server.md",
+        "https://github.com/NVIDIA/NeMo-Speech.cpp/blob/4f9676226f667d14608487df744f375db87127f8/docs/asr/configuration.md"
+      ],
+      "previously_reviewed_source_commit": "4c101bc7113f49101a3e11d2c994c519f41939f6",
+      "installation": "official v0.1.0 linux-x86_64-cuda release archive (CUDA 12), not a local source build",
+      "archive_sha256": "e68628f396489c98fb353e070efaea5bc4977409ae7734fce56c251a79e29147"
+    }
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 18101,
+    "host_port_flags_verified": true,
+    "verified_against": "docs/server.md at the pinned commit"
+  }
+}

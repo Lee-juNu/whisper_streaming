@@ -1,0 +1,8 @@
+# OPTIONAL: only for real faster-whisper runs (small / Kotoba). Install into an ISOLATED venv
+# after approval; the core harness, mock and tests are stdlib-only and need none of this.
+# Pinned to the production baseline (see lock.json). CUDA/cuDNN runtime libraries are NOT listed;
+# they must already match ctranslate2 4.8.0 on the host.
+faster-whisper==1.2.1
+ctranslate2==4.8.0
+numpy==2.4.6
+onnxruntime==1.26.0

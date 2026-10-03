@@ -1,0 +1,75 @@
+{
+  "name": "nemotron-rc1-160ms",
+  "engine": "nemotron_server",
+  "lock_model": "nemotron",
+  "modes": [
+    "file-controlled",
+    "replay-controlled",
+    "replay-native"
+  ],
+  "model": {
+    "repo": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+    "revision": "ea30d66debe3740a08b573244286791d423d6b3e",
+    "gguf_filename": "nemotron-3.5-asr-streaming-0.6b.q8_0.gguf",
+    "local_gguf_path": "/home/test_msen/npc_projects/whisper_streaming/comparison/local/models/nemotron/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf"
+  },
+  "gpu_index": 0,
+  "rnnt_right_context": 1,
+  "right_context_ms": 160,
+  "native_endpointing": {
+    "vad_based": false,
+    "stop_history_eou_ms": 800,
+    "note": "token-silence 800 ms is the STARTING POINT, not a tuned value"
+  },
+  "runtime": {
+    "binary": "/home/test_msen/npc_projects/whisper_streaming/comparison/local/nemo-runtime/nemo-speech-0.1.0-linux-x86_64-cuda/bin/nemo-speech",
+    "repo": "https://github.com/NVIDIA/NeMo-Speech.cpp",
+    "commit": "4f9676226f667d14608487df744f375db87127f8",
+    "release": "v0.1.0"
+  },
+  "server": {
+    "base_http": "http://127.0.0.1:18101",
+    "realtime_url": "ws://127.0.0.1:18101/v1/realtime",
+    "expected_model_markers": [
+      "nemotron-3.5-asr-streaming"
+    ],
+    "rejected_model_markers": [
+      "speech-streaming-en"
+    ]
+  },
+  "http": {
+    "language": "ja-JP",
+    "response_format": "json",
+    "verbatim": "true"
+  },
+  "session": {
+    "language": "ja-JP"
+  },
+  "session_endpointing_ms": 800,
+  "bias": {
+    "boost": 3.0,
+    "mechanism": "speech_contexts (requires tokenizer support, operator-attested)"
+  },
+  "timeouts_s": {
+    "connect": 5,
+    "http": 120,
+    "session_created": 10,
+    "session_updated": 10,
+    "final_after_commit": 30
+  },
+  "replay": {
+    "packet_ms": 20
+  },
+  "endpoint": {
+    "peak_threshold": 0.02,
+    "trailing_silence_ms": 1500,
+    "min_segment_ms": 400,
+    "max_segment_ms": 20000,
+    "frame_ms": 100,
+    "min_audio_peak": 0.001
+  },
+  "postfilter": {
+    "mode": "none",
+    "note": "raw Nemotron output; production Whisper post-filters are not applied"
+  }
+}

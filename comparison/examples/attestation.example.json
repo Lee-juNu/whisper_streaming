@@ -1,0 +1,13 @@
+{
+  "nemo_speech_commit": "4c101bc7113f49101a3e11d2c994c519f41939f6",
+  "gguf_path": "<LOCAL_PATH_NEMOTRON_Q8_GGUF>",
+  "serve_command": "<PASTE the exact argv printed by `python -m asrbench server-command ...` and actually used>",
+  "rnnt_right_context": 1,
+  "endpointing_enable": false,
+  "vad_based": false,
+  "stop_history_eou_ms": 800,
+  "batching_enabled": false,
+  "speech_contexts_supported": false,
+  "attested_by": "<OPERATOR_NAME>",
+  "attested_at": "<ISO8601 +09:00>"
+}

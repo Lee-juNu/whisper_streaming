@@ -1,0 +1,58 @@
+{
+  "name": "whisper-small",
+  "engine": "faster_whisper",
+  "lock_model": "whisper-small",
+  "modes": [
+    "file-controlled",
+    "replay-controlled"
+  ],
+  "model": {
+    "repo": "Systran/faster-whisper-small",
+    "revision": "536b0662742c02347bc0e980a01041f333bce120",
+    "local_model_dir": "/home/test_msen/npc_projects/whisper_streaming/comparison/local/models/whisper-small"
+  },
+  "device": "cuda",
+  "compute_type": "float16",
+  "gpu_index": 0,
+  "transcribe": {
+    "language": "ja",
+    "beam_size": 5,
+    "condition_on_previous_text": false,
+    "word_timestamps": false,
+    "vad_filter": true,
+    "vad_parameters": {
+      "min_silence_duration_ms": 300
+    },
+    "temperature": [
+      0.0,
+      0.2,
+      0.4,
+      0.6,
+      0.8,
+      1.0
+    ]
+  },
+  "pipeline": {
+    "prompt_previous_chars": 120,
+    "min_audio_peak": 0.001,
+    "max_no_speech_prob": 0.6,
+    "min_avg_logprob": -1.0
+  },
+  "endpoint": {
+    "peak_threshold": 0.02,
+    "trailing_silence_ms": 1500,
+    "min_segment_ms": 400,
+    "max_segment_ms": 20000,
+    "frame_ms": 100,
+    "min_audio_peak": 0.001
+  },
+  "bias": {
+    "mechanism": "faster-whisper hotwords (space-joined nickname_candidates); production baseline = off"
+  },
+  "postfilter": {
+    "mode": "ast_extract",
+    "source": "../ws_server.py",
+    "filters": [],
+    "note": "Production blocklist/repetition post-filters NOT applied until filters are listed (see `postfilter-inspect`): parity gap, recorded as UNVERIFIED_GAP; adjust source path if needed"
+  }
+}
