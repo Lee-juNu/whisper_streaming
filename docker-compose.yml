@@ -21,6 +21,11 @@ services:
       WHISPER_MAX_UTTERANCE_SEC: ${WHISPER_MAX_UTTERANCE_SEC:-20.0}
       WHISPER_MIN_UTTERANCE_SEC: ${WHISPER_MIN_UTTERANCE_SEC:-0.4}
       WHISPER_BEAM_SIZE: ${WHISPER_BEAM_SIZE:-5}
+      # 빠른 발화 확정(npc_panopticon/docs/early_endpoint_plan.md). 켜는 순서 = 판옵티콘 P2 → SIGNALS → EARLY.
+      # SIGNALS=1 이면 확정 앞뒤로 speech_start/speech_end 를 보낸다. EARLY 는 비우면 SILENCE_FLUSH 그대로
+      WHISPER_SPEECH_SIGNALS: ${WHISPER_SPEECH_SIGNALS:-0}
+      WHISPER_EARLY_FLUSH_SEC: ${WHISPER_EARLY_FLUSH_SEC:-}
+      WHISPER_PAUSE_LOG_MIN_SEC: ${WHISPER_PAUSE_LOG_MIN_SEC:-0.2}
       # 백엔드. faster-whisper(기본) | nemotron(발화를 아래 nemo 서비스로 보낸다, whisper 모델은 안 올린다)
       WHISPER_BACKEND: ${WHISPER_BACKEND:-faster-whisper}
       # nemotron 전용. compose 망 안의 nemo 서비스 주소와 언어 로캘(비우면 WHISPER_LANG 에서 변환)
