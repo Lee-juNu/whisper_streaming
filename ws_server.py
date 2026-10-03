@@ -29,6 +29,9 @@ ws_server.py — 마이크 PCM 을 받아 텍스트로 돌려주는 WebSocket AS
   WHISPER_HOST              서버 바인딩 주소   (기본: 0.0.0.0)
   WHISPER_PORT              서버 포트          (기본: 8100)
   WHISPER_LOG_LEVEL         로그 레벨          (기본: INFO)
+  WHISPER_BACKEND           faster-whisper | nemotron (기본: faster-whisper)
+                            nemotron 은 세그먼트 모드 전용 — 발화 WAV 를 nemo-speech 서버로
+                            보낸다(asr_backends.NemotronASR, NEMO_URL / NEMO_LANGUAGE)
   WHISPER_MODE              segment | stream   (기본: segment)
   WHISPER_SILENCE_FLUSH_SEC 무음 타임아웃(초)   (기본: 1.5) — 두 모드 공용
   WHISPER_SILENCE_PEAK      무음 판단 피크      (기본: 0.02)
@@ -124,6 +127,8 @@ BLOCKLIST = (
 )
 
 logger.setLevel(LOG_LEVEL)
+# 백엔드 모듈의 로그(nemo-speech 대기·모델 ID 등)도 같은 레벨로 보이게 한다 — 루트는 WARNING 이라 묻힌다.
+logging.getLogger("asr_backends").setLevel(LOG_LEVEL)
 
 # ASRManager 의 MIN_CHARS 를 환경변수로 덮어씀 (실시간 대화에서 짧은 텍스트도 출력)
 ASRManager.MIN_CHARS = MIN_CHARS
@@ -137,9 +142,9 @@ def _build_args() -> argparse.Namespace:
     return args
 
 _args = _build_args()
-logger.info(f"Whisper 모델 로드 중: model={_args.model} backend={_args.backend} lan={_args.lan}")
+logger.info(f"ASR 로드 중: model={_args.model} backend={_args.backend} lan={_args.lan}")
 _asr_singleton, _ = asr_factory(_args)
-logger.info("Whisper 모델 로드 완료")
+logger.info(f"ASR 모델 로드 완료 (backend={_args.backend})")
 
 # GPU 직렬화를 위한 단일 스레드 executor
 _executor = ThreadPoolExecutor(max_workers=1)

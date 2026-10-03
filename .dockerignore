@@ -1,0 +1,7 @@
+# 빌드 컨텍스트에서 뺀다. comparison/ 은 벤치 모델·런타임(수 GB)이라 넣으면 매 빌드가 늘어진다 —
+# nemo 서비스는 이 디렉토리를 이미지에 넣지 않고 bind mount 로 읽는다.
+.git
+comparison
+__pycache__
+*.pyc
+.env

@@ -32,6 +32,7 @@ from asr_backends import (
     WhisperTimestampedASR,
     MLXWhisper,
     OpenaiApiASR,
+    NemotronASR,
 )
 from online_processor import OnlineASRProcessor
 from vad import VACOnlineASRProcessor
@@ -59,7 +60,7 @@ def add_shared_args(parser: argparse.ArgumentParser):
                         choices=["transcribe", "translate"],
                         help="Transcribe or translate.")
     parser.add_argument('--backend', type=str, default="faster-whisper",
-                        choices=["faster-whisper", "whisper_timestamped", "mlx-whisper", "openai-api"],
+                        choices=["faster-whisper", "whisper_timestamped", "mlx-whisper", "openai-api", "nemotron"],
                         help='ASR backend.')
     parser.add_argument('--vac', action="store_true", default=False,
                         help='Use VAC (Silero VAD controller). Requires torch + silero_vad_iterator.')
@@ -126,6 +127,12 @@ def asr_factory(args, logfile=sys.stderr):
     if args.backend == "openai-api":
         logger.debug("Using OpenAI API backend.")
         asr = OpenaiApiASR(lan=args.lan, logfile=logfile)
+    elif args.backend == "nemotron":
+        # 모델을 이 프로세스에 올리지 않는다 — nemo-speech 서버(compose 의 nemo 서비스)에
+        # 발화 WAV 를 보낸다. 세그먼트 모드 전용. /ready 가 될 때까지 안에서 기다린다.
+        base_url = os.getenv("NEMO_URL", "http://nemo:18101")
+        logger.info(f"Connecting to nemo-speech at {base_url} (lan={args.lan}) ...")
+        asr = NemotronASR(lan=args.lan, base_url=base_url, logfile=logfile)
     else:
         if args.backend == "faster-whisper":
             asr_cls = FasterWhisperASR
