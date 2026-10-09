@@ -66,6 +66,7 @@ import sys
 import time
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from http import HTTPStatus
 from urllib.parse import urlparse, parse_qs
 
 import numpy as np
@@ -654,11 +655,24 @@ async def asr_handler(websocket, path: str = ""):
 
 
 # ── 진입점 ────────────────────────────────────────────────────────────────────
+def _process_request(connection, request):
+    """WebSocket 핸드셰이크 전에 끼어드는 평문 HTTP 분기 — compose 헬스체크용 ``GET /health``.
+
+    이 서버는 ASR 준비(nemotron 이면 nemo 의 /ready 확인)가 **끝난 뒤에야** 포트를 열므로
+    200 이 오면 전사 가능 상태다. 맨 TCP 접속으로 재면 websockets 가 「유효한 HTTP 요청이
+    아니다」며 15초마다 트레이스백을 남겨 이 경로를 둔다. 그 외 요청은 None 으로 넘겨
+    정상 WebSocket 핸드셰이크로 간다."""
+    if request.path.split("?", 1)[0] == "/health":
+        return connection.respond(HTTPStatus.OK, "ok\n")
+    return None
+
+
 async def main():
-    logger.info(f"ws_server 시작: ws://{HOST}:{PORT}/asr")
+    logger.info(f"ws_server 시작: ws://{HOST}:{PORT}/asr  (health: http://{HOST}:{PORT}/health)")
     # ping_interval=None: 로컬 서비스에서 자동 keepalive ping 비활성화
     # Go 클라이언트(gorilla/websocket)가 ping에 응답하지 않아 1011 오류 발생 방지
-    async with websockets.serve(asr_handler, HOST, PORT, ping_interval=None):
+    async with websockets.serve(asr_handler, HOST, PORT, ping_interval=None,
+                                process_request=_process_request):
         await asyncio.Future()  # run forever
 
 

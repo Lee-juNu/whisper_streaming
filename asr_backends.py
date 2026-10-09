@@ -366,8 +366,8 @@ class NemotronASR(ASRBase):
 
     환경변수: ``NEMO_URL``(기본 http://nemo:18101) · ``NEMO_LANGUAGE``(기본은 WHISPER_LANG
     을 ja→ja-JP 식으로 변환) · ``NEMO_VERBATIM``(기본 true, ITN 끔) ·
-    ``NEMO_PUNCTUATION``(기본 true) · ``NEMO_READY_TIMEOUT_SEC``(기본 180) ·
-    ``NEMO_HTTP_TIMEOUT_SEC``(기본 30).
+    ``NEMO_PUNCTUATION``(기본 true) · ``NEMO_READY_TIMEOUT_SEC``(기본 0 = 무한정 대기;
+    양수면 그 초 안에 /ready 가 안 오면 RuntimeError) · ``NEMO_HTTP_TIMEOUT_SEC``(기본 30).
     """
     sep = ""
 
@@ -392,7 +392,7 @@ class NemotronASR(ASRBase):
             self.language = None
         self.verbatim        = os.getenv("NEMO_VERBATIM", "true").strip().lower()
         self.punctuation     = os.getenv("NEMO_PUNCTUATION", "true").strip().lower()
-        self.ready_timeout_s = float(os.getenv("NEMO_READY_TIMEOUT_SEC", "180"))
+        self.ready_timeout_s = float(os.getenv("NEMO_READY_TIMEOUT_SEC", "0"))
         self.http_timeout_s  = float(os.getenv("NEMO_HTTP_TIMEOUT_SEC", "30"))
         self.model = self.load_model()
 
@@ -403,10 +403,16 @@ class NemotronASR(ASRBase):
 
     def load_model(self, modelsize=None, cache_dir=None, model_dir=None):
         """모델을 올리지 않는다. nemo-speech 의 ``/ready`` 가 true 가 될 때까지 기다리고
-        ``/v1/models`` 의 모델 ID 를 돌려준다. compose 가 nemo 보다 먼저 이 컨테이너를
-        띄워도 여기서 흡수한다(depends_on 은 프로파일 서비스에 걸 수 없다)."""
-        deadline = time.monotonic() + self.ready_timeout_s
+        ``/v1/models`` 의 모델 ID 를 돌려준다.
+
+        compose 의 depends_on(service_healthy)이 첫 겹이고 여기가 두 번째 겹이다 — 엔진이
+        재부팅 뒤 컨테이너를 되살릴 때는 depends_on 순서가 보장되지 않는다.
+        기본은 **무한정 대기**다. 상한을 두고 exit 하면 nemo 가 죽어 있는 동안 restart 정책이
+        3분마다 되살려 재시작 횟수만 쌓인다(2026-10-04~06, 1211회). 기다리는 동안 8100 을 안 열므로
+        compose healthcheck 가 unhealthy 로 드러낸다. 로그는 30초에 한 줄만 남긴다."""
+        deadline = (time.monotonic() + self.ready_timeout_s) if self.ready_timeout_s > 0 else None
         last_err = None
+        last_log = None
         while True:
             try:
                 ready = self._get_json("/ready")
@@ -415,12 +421,15 @@ class NemotronASR(ASRBase):
                 last_err = f"ready={ready!r}"
             except Exception as e:  # 연결 거부·타임아웃·JSON 오류 전부 재시도
                 last_err = repr(e)
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 raise RuntimeError(
                     f"nemo-speech 가 {self.ready_timeout_s:.0f}s 안에 준비되지 않음 "
                     f"({self.base_url}): {last_err}"
                 )
-            logger.info(f"NemotronASR: {self.base_url} 대기 중 ({last_err})")
+            now = time.monotonic()
+            if last_log is None or now - last_log >= 30.0:
+                logger.info(f"NemotronASR: {self.base_url} 대기 중 ({last_err})")
+                last_log = now
             time.sleep(1.0)
 
         ids = []

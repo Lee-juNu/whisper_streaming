@@ -1,7 +1,8 @@
-# 빌드 컨텍스트에서 뺀다. comparison/ 은 벤치 모델·런타임(수 GB)이라 넣으면 매 빌드가 늘어진다 —
-# nemo 서비스는 이 디렉토리를 이미지에 넣지 않고 bind mount 로 읽는다.
+# whisper 이미지의 빌드 컨텍스트에서 뺀다. comparison/ 은 벤치 모델·런타임(수 GB)이라 넣으면 매 빌드가 늘어진다.
+# nemo 서비스는 이 디렉토리를 쓰지 않는다 — nemo/Dockerfile 이 고정 URL 에서 받아 SHA-256 검증 후 이미지에 굽는다.
 .git
 comparison
+nemo
 __pycache__
 *.pyc
 .env

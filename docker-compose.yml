@@ -1,4 +1,7 @@
 services:
+  # STT 의 창구(:8100 WebSocket). 게이트웨이가 host.docker.internal:8100 으로 붙는다.
+  # **전사 엔진은 아래 nemo 서비스다** — 이 컨테이너는 발화 경계(VAD·무음 확정)와 필터만 맡고
+  # 발화 WAV 를 nemo 로 보낸다(asr_backends.NemotronASR). whisper 모델은 기본으로 올리지 않는다.
   whisper:
     build: .
     container_name: npc_whisper
@@ -16,7 +19,7 @@ services:
       WHISPER_SILENCE_FLUSH_SEC: ${WHISPER_SILENCE_FLUSH_SEC:-1.5}
       WHISPER_MAX_BUFFER_SEC: ${WHISPER_MAX_BUFFER_SEC:-10.0}
       WHISPER_MIN_CHARS: ${WHISPER_MIN_CHARS:-1}
-      # segment = 발화 단위로 한 번에 전사(기본). stream = 기존 LocalAgreement 스트리밍(롤백용)
+      # segment = 발화 단위로 한 번에 전사(기본). stream = 기존 LocalAgreement 스트리밍(롤백용, faster-whisper 전용)
       WHISPER_MODE: ${WHISPER_MODE:-segment}
       WHISPER_MAX_UTTERANCE_SEC: ${WHISPER_MAX_UTTERANCE_SEC:-20.0}
       WHISPER_MIN_UTTERANCE_SEC: ${WHISPER_MIN_UTTERANCE_SEC:-0.4}
@@ -26,15 +29,34 @@ services:
       WHISPER_SPEECH_SIGNALS: ${WHISPER_SPEECH_SIGNALS:-0}
       WHISPER_EARLY_FLUSH_SEC: ${WHISPER_EARLY_FLUSH_SEC:-}
       WHISPER_PAUSE_LOG_MIN_SEC: ${WHISPER_PAUSE_LOG_MIN_SEC:-0.2}
-      # 백엔드. faster-whisper(기본) | nemotron(발화를 아래 nemo 서비스로 보낸다, whisper 모델은 안 올린다)
-      WHISPER_BACKEND: ${WHISPER_BACKEND:-faster-whisper}
+      # 백엔드. nemotron(기본 — 2026-10-02 하루 운용 뒤 채택, 10-07 정착) | faster-whisper(폴백, WHISPER_MODEL 을 이 프로세스에 올린다)
+      # 폴백으로 되돌리기: .env 에 WHISPER_BACKEND=faster-whisper 를 두고
+      #   docker compose up -d --no-deps whisper && docker compose stop nemo   (안 내리면 GPU 에 모델이 둘)
+      WHISPER_BACKEND: ${WHISPER_BACKEND:-nemotron}
       # nemotron 전용. compose 망 안의 nemo 서비스 주소와 언어 로캘(비우면 WHISPER_LANG 에서 변환)
       NEMO_URL: ${NEMO_URL:-http://nemo:18101}
       NEMO_LANGUAGE: ${NEMO_LANGUAGE:-}
+      # nemo 의 /ready 를 기다리는 상한(초). 0 = 무한정 — 끝내 안 오면 exit 1 로 재시작을 되풀이하는 대신
+      # 「Up (unhealthy)」로 서서 기다린다(아래 healthcheck 가 8100 이 열렸는지로 판정).
+      # 2026-10-04~06 에 nemo 가 죽어 있는 동안 180초 상한이 61시간에 1211회 재시작을 만들었다.
+      NEMO_READY_TIMEOUT_SEC: ${NEMO_READY_TIMEOUT_SEC:-0}
     volumes:
       - whisper_model_cache:/root/.cache/huggingface
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # compose 가 띄울 때는 nemo 가 /ready 가 된 뒤에 시작한다. 엔진이 재부팅 뒤 되살릴 때는 이 순서가
+    # 보장되지 않으므로 NemotronASR 의 대기가 두 번째 겹이다.
+    depends_on:
+      nemo:
+        condition: service_healthy
+    # ws_server 는 ASR 준비(nemo /ready 확인) **뒤에** 8100 을 연다 — /health 가 200 이면 전사 가능 상태다.
+    # (맨 TCP 접속으로 재면 websockets 가 매번 트레이스백을 남긴다 — ws_server._process_request 참고)
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8100/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         reservations:
@@ -43,21 +65,16 @@ services:
               count: 1
               capabilities: [gpu]
 
-  # Nemotron ASR 서버(NVIDIA NeMo-Speech.cpp v0.1.0). WHISPER_BACKEND=nemotron 일 때만 띄운다 —
-  # 스위치는 .env 의 COMPOSE_PROFILES=nemotron 이다. 3070 8GB 에는 모델 하나만 올리므로
-  # whisper 쪽이 nemotron 백엔드일 때는 whisper 모델을 로드하지 않는다(NemotronASR).
-  # 바이너리·GGUF 는 comparison/local 의 벤치 설치본을 **디렉토리째** 읽기 전용으로 마운트한다
-  # (파일 하나짜리 바인드는 재부팅 레이스로 exit 127 이 난다 — syrinx·go2rtc 전례).
-  # 베이스가 ubuntu 인 이유: 번들이 libcudart·libcublas 를 동봉하고, libcuda 는 nvidia 런타임이
-  # 드라이버에서 넣어 준다(NVIDIA_DRIVER_CAPABILITIES). CUDA 이미지를 끌어올 필요가 없다.
-  # 되돌릴 때: docker compose --profile "*" down  (프로파일 밖에서는 up -d 가 이 컨테이너를 안 내린다)
+  # Nemotron ASR 서버(NVIDIA NeMo-Speech.cpp v0.1.0, HTTP /v1/audio/transcriptions = offline 모드).
+  # 런타임·GGUF 는 **이미지에 굽는다**(nemo/Dockerfile) — bind mount 는 재부팅 레이스로 exit 127 이 나고
+  # restart 정책이 손을 못 댄다(2026-10-04 실측, syrinx·go2rtc 전례). 그래서 볼륨이 없다.
+  # 3070 8GB 에는 모델 하나만 올리므로 whisper 쪽은 nemotron 백엔드일 때 whisper 모델을 로드하지 않는다.
   nemo:
-    image: ubuntu:22.04
+    build: ./nemo
+    image: npc_nemo:0.1.0-nemotron3.5-q8
     container_name: npc_nemo
-    profiles: ["nemotron"]
     restart: unless-stopped
     command:
-      - /opt/nemo/bin/nemo-speech
       - serve
       - --asr.model.path
       - /models/nemotron-3.5-asr-streaming-0.6b.q8_0.gguf
@@ -76,9 +93,13 @@ services:
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility
-    volumes:
-      - ./comparison/local/nemo-runtime/nemo-speech-0.1.0-linux-x86_64-cuda:/opt/nemo:ro
-      - ./comparison/local/models/nemotron:/models:ro
+    # /ready 가 {"ready":true} 를 줄 때만 건강. 모델 로드 중엔 false 라 whisper 가 그 동안 기다린다.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:18101/ready | grep -q true"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
     deploy:
       resources:
         reservations:

@@ -224,6 +224,31 @@ arecord -f S16_LE -c1 -r 16000 -t raw -D default | nc localhost 43001
 
 - nc is netcat with server's host and port
 
+### NPC 운용 구성 — `npc_whisper` + `npc_nemo` (docker compose)
+
+이 포크의 운영 STT 는 컨테이너 둘로 돈다. 둘 다 이 리포의 `docker-compose.yml` 이 띄운다.
+
+| 컨테이너 | 역할 | 포트 |
+|---|---|---|
+| `npc_whisper` | `ws_server.py`. 게이트웨이가 붙는 WebSocket 창구. **발화 경계(VAD·무음 확정)와 필터만** 맡고 발화 WAV 를 nemo 로 보낸다 | 8100 (호스트 퍼블리시) |
+| `npc_nemo` | NVIDIA NeMo-Speech.cpp v0.1.0 + Nemotron 3.5 ASR streaming 0.6B Q8. 실제 전사 엔진 | 18101 (compose 망 안에서만) |
+
+- **기본 백엔드는 nemotron 이다**(2026-10-02 하루 운용 뒤 채택, 10-07 정착). whisper 모델은 폴백일 때만 올린다.
+- **nemo 의 런타임·GGUF 는 이미지에 굽는다**(`nemo/Dockerfile`, 고정 리비전 + SHA-256 검증). bind mount 로 두면
+  재부팅 직후 Docker Desktop 의 파일공유 레이스로 `exec: no such file` → exit 127 이 나고, 프로세스가 시작조차
+  못 해 restart 정책이 재시도하지 않는다(2026-10-04 실측: STT 가 61시간 조용히 죽어 있었다).
+- **시작 순서는 두 겹이다.** compose 는 `depends_on: service_healthy`(nemo `/ready`)로, 엔진이 재부팅 뒤 되살릴 때는
+  `NemotronASR` 이 `/ready` 를 무한정 기다린다(`NEMO_READY_TIMEOUT_SEC=0`). 기다리는 동안 8100 을 열지 않으므로
+  `docker ps` 에 `(unhealthy)` 로 드러난다 — exit 1 로 재시작을 되풀이하던 예전 동작(1211회)보다 상태가 보인다.
+- 설정 오버라이드는 `.env`(gitignore). 폴백으로 되돌리기: `.env` 에 `WHISPER_BACKEND=faster-whisper` →
+  `docker compose up -d --no-deps whisper && docker compose stop nemo`. nemo 를 안 내리면 GPU 에 모델이 둘 올라간다.
+
+```
+docker compose build nemo && docker compose up -d           # 처음 또는 모델/런타임 변경 뒤
+docker ps --filter name=npc_ --format '{{.Names}}\t{{.Status}}'  # 둘 다 (healthy) 여야 한다
+docker logs -f npc_whisper                                   # STT(eou): '...' [발화 Xs / 추론 Ys]
+```
+
 ### With WebSocket, FastAPI and web demo
 
 Follow https://github.com/QuentinFuxa/WhisperLiveKit . Contributed by @QuentinFuxa.
