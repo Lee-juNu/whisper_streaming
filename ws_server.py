@@ -20,6 +20,8 @@ ws_server.py — 마이크 PCM 을 받아 텍스트로 돌려주는 WebSocket AS
                       {"type":"eou"}           발화 끝. 지금까지 받은 것을 확정한다
                       {"type":"speech_start"}  새 발화 시작. 남은 앞 발화를 먼저 닫는다
   Server → Client : segment 모드 {"type":"final","text":...,"duration":...,"reason":...}
+                    final의 audio_start_sample / audio_end_sample은 이 WS에서 받은
+                    PCM16/16kHz 누적 샘플 구간 [시작, 끝). 무음·버린 전사도 위치에 포함한다.
                     stream  모드 인식된 텍스트 (text, UTF-8)  ← 기존과 동일
 
 엔드포인트:
@@ -455,6 +457,8 @@ async def _run_segment_mode(websocket, session_id: str):
     silence(받은 청크가 계속 무음) / max(상한 초과 강제 컷).
     """
     utterance: list[np.ndarray] = []
+    received_samples = 0          # 이 WS의 유효 PCM 누계. 버린 발화도 되감지 않는다.
+    utterance_start_sample = 0
     utt_sec         = 0.0
     trailing_sil    = 0.0          # 버퍼 꼬리에 붙어 있는 무음 길이(초)
     # ── 쉼 측정(P0, 로그 전용) ── 오디오 시간 기준. 클라이언트가 무음까지 흘려보내므로
@@ -483,6 +487,9 @@ async def _run_segment_mode(websocket, session_id: str):
             if not utterance:
                 return
             audio        = np.concatenate(utterance)
+            # 추론을 기다리는 동안 다음 PCM이 들어올 수 있으므로 지금 범위를 고정한다.
+            audio_start_sample = utterance_start_sample
+            audio_end_sample = audio_start_sample + len(audio)
             tail_sil     = trailing_sil
             utt_pauses, utt_resumed = pauses, resumed_after
             was_voiced   = voiced_seen
@@ -539,7 +546,8 @@ async def _run_segment_mode(websocket, session_id: str):
             }))
             try:
                 await websocket.send(json.dumps(
-                    {"type": "final", "text": text, "duration": round(dur, 2), "reason": reason},
+                    {"type": "final", "text": text, "duration": round(dur, 2), "reason": reason,
+                     "audio_start_sample": audio_start_sample, "audio_end_sample": audio_end_sample},
                     ensure_ascii=False,
                 ))
             except Exception:
@@ -593,6 +601,9 @@ async def _run_segment_mode(websocket, session_id: str):
 
             chunk_sec    = len(audio) / SAMPLING_RATE
             last_recv_at = time.monotonic()
+            if not utterance:
+                utterance_start_sample = received_samples
+            received_samples += len(audio)
             utterance.append(audio)
             utt_sec += chunk_sec
 

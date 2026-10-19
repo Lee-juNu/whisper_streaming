@@ -13,8 +13,10 @@ import asyncio
 import json
 import os
 import sys
+import threading
 import unittest
 import wave
+from unittest.mock import patch
 
 import numpy as np
 
@@ -97,6 +99,86 @@ class TailRepeat(unittest.TestCase):
     def test_keeps_human_repetition(self):
         for text in ("はいはいはいはい", "うんうん、そうだね", "ドキドキしちゃう", "まあまあかな", "あはははは"):
             self.assertEqual(W._collapse_tail_repeat(text), text)
+
+
+class AudioRanges(unittest.TestCase):
+    """합성 PCM과 가짜 전사로 연결별 위치·드롭·동시 수신을 검증한다. WAV 불필요."""
+
+    def setUp(self):
+        self.speech = np.full(6400, 4000, dtype=np.int16).tobytes()
+        self.settings = patch.multiple(W, SPEECH_SIGNALS=False, SEGMENT_FLUSH_SEC=10.0,
+                                       MAX_UTTERANCE_SEC=20.0, MIN_UTTERANCE_SEC=0.4)
+        self.settings.start()
+        self.addCleanup(self.settings.stop)
+
+    def run_messages(self, messages, transcribe=None):
+        class ScriptedWS:
+            def __init__(self):
+                self.sent = []
+
+            def __aiter__(self):
+                async def generate():
+                    for message in messages:
+                        if callable(message):
+                            await message()
+                        else:
+                            yield message
+                        await asyncio.sleep(0)
+                return generate()
+
+            async def send(self, message):
+                self.sent.append(json.loads(message))
+
+        ws = ScriptedWS()
+        with patch.object(W, "_transcribe_utterance", side_effect=transcribe or (lambda audio, prompt: "待って")):
+            asyncio.run(W._run_segment_mode(ws, "range-test"))
+        return [(m["audio_start_sample"], m["audio_end_sample"]) for m in ws.sent if m["type"] == "final"]
+
+    def test_separate_utterances_include_leading_silence(self):
+        ranges = self.run_messages([self.speech, '{"type":"eou"}', sil(0.1).tobytes(),
+                                    self.speech, '{"type":"eou"}'])
+        self.assertEqual(ranges, [(0, 6400), (6400, 14400)])
+
+    def test_dropped_noise_and_silence_still_advance_offset(self):
+        ranges = self.run_messages([b"", b"\x00", self.speech[:6400], '{"type":"eou"}',
+                                    sil(0.4).tobytes(), '{"type":"eou"}', self.speech])
+        self.assertEqual(ranges, [(9600, 16000)])
+
+    def test_filtered_transcript_still_advances_offset(self):
+        results = iter(["", "待って"])
+        ranges = self.run_messages([self.speech, '{"type":"eou"}', self.speech],
+                                   lambda audio, prompt: next(results))
+        self.assertEqual(ranges, [(6400, 12800)])
+
+    def test_maximum_split_and_new_connection_reset(self):
+        with patch.object(W, "MAX_UTTERANCE_SEC", 0.4):
+            self.assertEqual(self.run_messages([self.speech, self.speech]), [(0, 6400), (6400, 12800)])
+        self.assertEqual(self.run_messages([self.speech]), [(0, 6400)])
+
+    def test_timeout_snapshot_is_not_extended_by_pcm_during_inference(self):
+        started, received_next = threading.Event(), threading.Event()
+
+        def transcribe(audio, prompt):
+            if not started.is_set():
+                started.set()
+                if not received_next.wait(2):
+                    raise AssertionError("next PCM was not received during inference")
+            return "待って"
+
+        async def await_inference():
+            for _ in range(200):
+                if started.is_set():
+                    return
+                await asyncio.sleep(0.01)
+            self.fail("timeout did not start inference")
+
+        async def mark_next_received():
+            received_next.set()
+
+        with patch.object(W, "SEGMENT_FLUSH_SEC", 0.01):
+            ranges = self.run_messages([self.speech, await_inference, self.speech,
+                                        mark_next_received, '{"type":"eou"}'], transcribe)
+        self.assertEqual(ranges, [(0, 6400), (6400, 12800)])
 
 
 if __name__ == "__main__":
